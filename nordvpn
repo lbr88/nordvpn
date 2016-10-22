@@ -53,7 +53,7 @@ function printusage {
 	echo -e '\t\t-u\tuse udp configs. either -u or -t is required or both'
 	echo -e '\t\t-c "<countrycodes>" or -c <countrycode> is allowed multiple times for selecting more.'
 	echo -e '\t\t\texample -c us -c ca\n\t\t\tif -c is not set all vpns will be added\n'
-	echo -e '\tnordvpn [-q] [-f] [-r] update'
+	echo -e '\tnordvpn [-q] [-f] [-r] select'
 	echo -e '\t\tSelect a new config from the available vpns in $vpndir\n'
 	echo -e '\t\t-q\tquiet.'
 	echo -e '\t\t-f\tselect fastest (default). uses netselect to find the fastest responding host to ICMP.'
@@ -98,19 +98,18 @@ function download {
 		for loopconf in *.ovpn; do
 			sed -i 's/auth-user-pass/auth-user-pass login/g' $loopconf
 		done
-		showstatus;
 	else
 		exit 1
 	fi
 }
-function update_random {
+function selectconf_random {
 	pushd $vpndir
 	randomconf=$(ls *.ovpn|sort -R| tail -n 1);
 	msg Selected $randomconf. linking to $vpnconffile.
 	if [[ -L $vpnconffile ]];then rm $vpnconffile; fi
 	ln -s $vpndir/$randomconf $vpnconffile || Error linking.
 }
-function update_fastest {
+function selectconf_fastest {
 	msg Pinging servers.
 	fastest=$(egrep 'remote [0-9.]*' $vpndir/*.ovpn| cut -d" " -f 2 |xargs netselect -I | awk '{print $2}');
 	fastestconf=$(grep $fastest $vpndir/*.ovpn|cut -d: -f1 |xargs basename)
@@ -118,13 +117,13 @@ function update_fastest {
 	if [[ -L $vpnconffile ]];then rm $vpnconffile; fi
 	ln -s $vpndir/$fastestconf $vpnconffile || msgerr Error linking.
 }
-function update {
+function selectconf {
 	case $UPDATETYPE in
 		fastest)
-			update_fastest
+			selectconf_fastest
 			;;
 		random)
-			update_random
+			selectconf_random
 			;;
 	esac
 }
@@ -177,9 +176,6 @@ shift "$((OPTIND - 1))"
 
 cmd=$1
 case $cmd in
-	login)
-		login
-		;;
 	download)
 
 		if [[ $UDP == false && $TCP == false ]]; then
@@ -187,26 +183,25 @@ case $cmd in
 			exit 1
 		fi
 		download
-		cmd=update
+		cmd=select
 		;&
-	update)
-		update
-		service nordvpn restart
-		sleep 10
-		showstatus
-		;;
+	select)
+		selectconf
+		cmd=restart
+		;&
 	restart)
+		msg Restarting nordvpn.
 		service nordvpn restart
 		;;
 	stop)
+		msg Stopping nordvpn.
 		service nordvpn stop
 		;;
 	start)
+		msg Starting nordvpn.
 		service nordvpn start
 		;;
 	status)
-		systemctl --no-pager --full status nordvpn
-		ifconfig tun0
 		showstatus
 		;;
 	*)
