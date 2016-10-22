@@ -1,0 +1,215 @@
+#!/bin/bash
+
+UPDATETYPE=fastest
+UDP=false
+TCP=false
+QUIET=false
+COUNTRIES=""
+tmpdir=$(mktemp -d "/tmp/nordvpn.XXXXXXXXXXXXX")
+vpnhttpzip=https://nordvpn.com/api/files/zip 
+vpnzipfile=/etc/openvpn/nordvpns.zip
+vpndir=/etc/openvpn/nordvpns
+vpnconffile=/etc/openvpn/nordvpn.conf
+configdir=$HOME/.config/nordvpn
+
+pushd () {
+    command pushd "$@" > /dev/null
+}
+
+popd () {
+    command popd "$@" > /dev/null
+}
+function msgdie {
+	msgerr $@
+	exit 1
+}
+function msgerr {
+	echo -e :: $@ >&2
+}
+function msg {
+	if [[ $QUIET == false ]];then echo -e :: $@; fi
+}
+function cleanupexit {
+	popd +0 &>/dev/null
+	rm -rf $tmpdir
+
+}
+trap cleanupexit EXIT
+
+
+if [[ ! -w $tmpdir ]];then exit 1; fi
+
+if [[ ! -d $vpndir ]];then mkdir -p $vpndir; fi
+if [[ ! -w $vpndir ]];then
+	exit 1;
+fi
+
+function printusage {
+	echo -e 'usage:\n'
+	echo -e '\tnordvpn [-q] [-t] [-u] [-c countrycodes...] download'
+	echo -e '\t\tDownload config files from nordvpn. optional: add the countries parameter to only get a specific set of vpns\n'
+	echo -e '\t\t-q\tquiet.'
+	echo -e '\t\t-t\tuse tcp configs.'
+	echo -e '\t\t-u\tuse udp configs. either -u or -t is required or both'
+	echo -e '\t\t-c "<countrycodes>" or -c <countrycode> is allowed multiple times for selecting more.'
+	echo -e '\t\t\texample -c us -c ca\n\t\t\tif -c is not set all vpns will be added\n'
+	echo -e '\tnordvpn [-q] [-f] [-r] update'
+	echo -e '\t\tSelect a new config from the available vpns in $vpndir\n'
+	echo -e '\t\t-q\tquiet.'
+	echo -e '\t\t-f\tselect fastest (default). uses netselect to find the fastest responding host to ICMP.'
+	echo -e '\t\t-r\tselect random.\n'
+}
+function printcountries {
+	countries=$(ls $vpndir/*.ovpn -1 |while read f;do basename $f | cut -d. -f1| grep -o '^[A-Za-z][A-Za-z]';done |sort -u)
+	msg "Countries:\t$countries"
+}
+function printcountriesvpncount {
+	countriesvpncount=$(ls $vpndir/*.ovpn -1 |while read f;do basename $f | cut -d. -f1| grep -o '^[A-Za-z][A-Za-z]';done |sort |uniq -c |awk '{print $2 "("$1")" }')
+	msg "Countries:\t$countriesvpncount"
+}
+function download {
+	#get new
+	pushd $tmpdir
+	msg Downloading.
+	curl -s -o $vpnzipfile -z $vpnzipfile $vpnhttpzip || msgdie Download failed.
+	cp $vpnzipfile ./vpn.zip
+	if [[ -f vpn.zip ]];then
+		msg Unpacking.
+		unzip -qq vpn.zip
+		rm vpn.zip
+		#cleanup old stuff
+		pushd $vpndir
+		msg Removing old files.
+		rm *.ovpn
+		popd
+		if [[ $TCP == false ]];then rm *tcp*.ovpn; fi
+		if [[ $UDP == false ]];then rm *udp*.ovpn; fi
+	
+		countries="${COUNTRIES[@]}"
+		if [[ -z $countries ]];then
+			mv *.ovpn $vpndir;
+		else
+			for c in $countries; do
+				mv $c*.ovpn $vpndir
+			done
+		fi
+		pushd $vpndir
+		msg Changing configs to autologin.
+		for loopconf in *.ovpn; do
+			sed -i 's/auth-user-pass/auth-user-pass login/g' $loopconf
+		done
+		showstatus;
+	else
+		exit 1
+	fi
+}
+function update_random {
+	pushd $vpndir
+	randomconf=$(ls *.ovpn|sort -R| tail -n 1);
+	msg Selected $randomconf. linking to $vpnconffile.
+	if [[ -L $vpnconffile ]];then rm $vpnconffile; fi
+	ln -s $vpndir/$randomconf $vpnconffile || Error linking.
+}
+function update_fastest {
+	msg Pinging servers.
+	fastest=$(egrep 'remote [0-9.]*' $vpndir/*.ovpn| cut -d" " -f 2 |xargs netselect -I | awk '{print $2}');
+	fastestconf=$(grep $fastest $vpndir/*.ovpn|cut -d: -f1 |xargs basename)
+	msg Fastest server: $fastestconf. linking to $vpnconffile.
+	if [[ -L $vpnconffile ]];then rm $vpnconffile; fi
+	ln -s $vpndir/$fastestconf $vpnconffile || msgerr Error linking.
+}
+function update {
+	case $UPDATETYPE in
+		fastest)
+			update_fastest
+			;;
+		random)
+			update_random
+			;;
+	esac
+}
+function showstatus {
+	vpncount=$(ls $vpndir/*.ovpn|wc -l)
+	vpncurrent=$(basename $(readlink -f $vpnconffile))
+	ip=$(curl -s -o- http://httpbin.org/ip |grep origin |cut -d '"' -f4)
+	hostname=$(dig +short -x $ip)
+	provider=$(dig -x $ip |grep SOA | awk '{print $6}'| rev |cut -d. -f-3 |rev)
+	printcountriesvpncount
+	msg "Total:\t$vpncount vpn's"
+	msg "Server: $vpncurrent"
+	msg "External ip:\t$ip"
+	msg "Hostname:\t$hostname"
+	msg "Provider:\t$provider"
+}
+
+while getopts ":c:qrftu" opt; do
+	case $opt in
+		c)
+			COUNTRIES+=" $OPTARG"
+			;;
+		q)
+			QUIET=true
+			;;
+		r)
+			UPDATETYPE=random
+			;;
+		f)
+			UPDATETYPE=fastest
+			;;
+		u)
+			UDP=true
+			;;
+		t)
+			TCP=true
+			;;
+    		\?)
+			msgerr "Invalid option: -$OPTARG" >&2
+			printusage
+			exit 1
+			;;
+		:)
+			
+  esac
+done
+shift "$((OPTIND - 1))"
+#check to see if they have selected udp or tcp
+
+
+cmd=$1
+case $cmd in
+	login)
+		login
+		;;
+	download)
+
+		if [[ $UDP == false && $TCP == false ]]; then
+			msgerr "Both UDP and TCP is disabled please pick one or both with -u or -t"
+			exit 1
+		fi
+		download
+		cmd=update
+		;&
+	update)
+		update
+		service nordvpn restart
+		sleep 10
+		showstatus
+		;;
+	restart)
+		service nordvpn restart
+		;;
+	stop)
+		service nordvpn stop
+		;;
+	start)
+		service nordvpn start
+		;;
+	status)
+		systemctl --no-pager --full status nordvpn
+		ifconfig tun0
+		showstatus
+		;;
+	*)
+		printusage
+		;;	
+esac
