@@ -1,0 +1,14 @@
+# Defaults for nordvpn
+
+# Default updatetype fastest|random
+UPDATETYPE=fastest
+
+# Use udp vpns
+UDP=false
+
+# Use TCP vpns
+TCP=false
+
+# List of countries. blank or commented out will make it use all the available vpns
+#COUNTRIES="de fi uk dk lu se no nl bg"
+

@@ -1,0 +1,24 @@
+[Unit]
+Description=Nordvpn Service
+Before=systemd-user-sessions.service
+After=network.target
+
+[Service]
+PrivateTmp=true
+KillMode=mixed
+Type=forking
+#ExecStartPre=/usr/local/sbin/nordvpn -qf update
+ExecStart=/usr/sbin/openvpn --daemon ovpn-nordvpn --status /run/nordvpn/nordvpn.status 10 --cd /etc/nordvpn --script-security 2 --config /etc/nordvpn/nordvpn.conf --writepid /run/nordvpn/nordvpn.pid
+PIDFile=/run/nordvpn/nordvpn.pid
+ExecReload=/bin/kill -HUP $MAINPID
+WorkingDirectory=/etc/nordvpn
+ProtectSystem=yes
+CapabilityBoundingSet=CAP_IPC_LOCK CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SETGID CAP_SETUID CAP_SYS_CHROOT CAP_DAC_READ_SEARCH CAP_AUDIT_WRITE
+LimitNPROC=10
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/net/tun rw
+
+[Install]
+WantedBy=multi-user.target
+
+

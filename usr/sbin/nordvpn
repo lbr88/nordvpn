@@ -1,16 +1,22 @@
 #!/bin/bash
-
 UPDATETYPE=fastest
 UDP=false
 TCP=false
 QUIET=false
 COUNTRIES=""
+if [[ -r "/etc/default/nordvpn" ]];then
+	. /etc/default/nordvpn
+fi
+
 tmpdir=$(mktemp -d "/tmp/nordvpn.XXXXXXXXXXXXX")
 vpnhttpzip=https://nordvpn.com/api/files/zip 
-vpnzipfile=/etc/openvpn/nordvpns.zip
-vpndir=/etc/openvpn/nordvpns
-vpnconffile=/etc/openvpn/nordvpn.conf
-configdir=$HOME/.config/nordvpn
+configdir=/etc/nordvpn
+libdir=/var/lib/nordvpn
+rundir=/run/nordvpn
+vpnzipfile=$libdir/vpns.zip
+vpndir=$libdir/vpns
+vpnconffile=$configdir/nordvpn.conf
+vpnauthuserpassfile=$configdir/login.conf
 
 pushd () {
     command pushd "$@" > /dev/null
@@ -36,16 +42,16 @@ function cleanupexit {
 }
 trap cleanupexit EXIT
 
-
-if [[ ! -w $tmpdir ]];then exit 1; fi
-
-if [[ ! -d $vpndir ]];then mkdir -p $vpndir; fi
-if [[ ! -w $vpndir ]];then
-	exit 1;
-fi
-
+for d in $configdir $libdir $rundir $vpndir $tmpdir; do
+	if [[ ! -d $d ]];then mkdir -p $d; fi
+	if [[ ! -w $d ]];then
+		msgdie $d not writable;
+	fi
+done
 function printusage {
 	echo -e 'usage:\n'
+	echo -e '\tnordvpn login'
+	echo -e '\t\tEnables autologin\n'
 	echo -e '\tnordvpn [-q] [-t] [-u] [-c countrycodes...] download'
 	echo -e '\t\tDownload config files from nordvpn. optional: add the countries parameter to only get a specific set of vpns\n'
 	echo -e '\t\t-q\tquiet.'
@@ -58,6 +64,8 @@ function printusage {
 	echo -e '\t\t-q\tquiet.'
 	echo -e '\t\t-f\tselect fastest (default). uses netselect to find the fastest responding host to ICMP.'
 	echo -e '\t\t-r\tselect random.\n'
+	echo -e '\n'
+	echo -e '\tnordvpn reads defaults from /etc/default/nordvpn\n'
 }
 function printcountries {
 	countries=$(ls $vpndir/*.ovpn -1 |while read f;do basename $f | cut -d. -f1| grep -o '^[A-Za-z][A-Za-z]';done |sort -u)
@@ -66,6 +74,27 @@ function printcountries {
 function printcountriesvpncount {
 	countriesvpncount=$(ls $vpndir/*.ovpn -1 |while read f;do basename $f | cut -d. -f1| grep -o '^[A-Za-z][A-Za-z]';done |sort |uniq -c |awk '{print $2 "("$1")" }')
 	msg "Countries:\t$countriesvpncount"
+}
+function autologin {
+	if [[ -w $configdir ]];then
+		msg "Warning your username and password will be saved in clear text in $vpnauthuserpassfile chmodded 600(rw for root)"
+		read -p "Username: " username
+		read -s -p "Password: " password
+		echo ""
+		echo $username > $vpnauthuserpassfile
+		echo $password >> $vpnauthuserpassfile
+		chmod 600 $vpnauthuserpassfile
+		updatelogin
+	fi
+}
+function updatelogin {
+	if [[ -r $vpnauthuserpassfile ]];then
+		pushd $vpndir
+		for loopconf in *.ovpn; do
+			sed -i "s/auth-user-pass\$/auth-user-pass $(basename $vpnauthuserpassfile)/g" $loopconf
+		done
+		popd
+	fi
 }
 function download {
 	#get new
@@ -93,11 +122,8 @@ function download {
 				mv $c*.ovpn $vpndir
 			done
 		fi
-		pushd $vpndir
-		msg Changing configs to autologin.
-		for loopconf in *.ovpn; do
-			sed -i 's/auth-user-pass/auth-user-pass login/g' $loopconf
-		done
+		msg Changing configs to use autologin.
+		updatelogin
 	else
 		exit 1
 	fi
@@ -110,10 +136,13 @@ function selectconf_random {
 	ln -s $vpndir/$randomconf $vpnconffile || Error linking.
 }
 function selectconf_fastest {
+	msg Stopping vpn.
+	service nordvpn stop
+	sleep 5
 	msg Pinging servers.
-	fastest=$(egrep 'remote [0-9.]*' $vpndir/*.ovpn| cut -d" " -f 2 |xargs netselect -I | awk '{print $2}');
+	fastest=$(egrep 'remote [0-9.]*' $vpndir/*.ovpn| cut -d" " -f 2 |xargs netselect -t 50 -vv | awk '{print $2}');
 	fastestconf=$(grep $fastest $vpndir/*.ovpn|cut -d: -f1 |xargs basename)
-	msg Fastest server: $fastestconf. linking to $vpnconffile.
+	msg Server with lowest latency: $fastestconf. linking to $vpnconffile.
 	if [[ -L $vpnconffile ]];then rm $vpnconffile; fi
 	ln -s $vpndir/$fastestconf $vpnconffile || msgerr Error linking.
 }
@@ -132,7 +161,11 @@ function showstatus {
 	vpncurrent=$(basename $(readlink -f $vpnconffile))
 	ip=$(curl -s -o- http://httpbin.org/ip |grep origin |cut -d '"' -f4)
 	hostname=$(dig +short -x $ip)
-	provider=$(dig -x $ip |grep SOA | awk '{print $6}'| rev |cut -d. -f-3 |rev)
+	if [[ -z $hostname ]];then
+		provider=$(dig -x $ip |grep SOA | awk '{print $6}'| rev |cut -d. -f-3 |rev)
+	else
+		provider=$(echo $hostname | rev |cut -d. -f-3 |rev)
+	fi
 	printcountriesvpncount
 	msg "Total:\t$vpncount vpn's"
 	msg "Server: $vpncurrent"
@@ -140,10 +173,14 @@ function showstatus {
 	msg "Hostname:\t$hostname"
 	msg "Provider:\t$provider"
 }
-
+first=true
 while getopts ":c:qrftu" opt; do
 	case $opt in
 		c)
+			if [[ $first == true && ! -z $COUNTRIES ]];then
+				COUNTRIES="";
+				first=false
+			fi
 			COUNTRIES+=" $OPTARG"
 			;;
 		q)
@@ -176,6 +213,9 @@ shift "$((OPTIND - 1))"
 
 cmd=$1
 case $cmd in
+	login)
+		login
+		;;
 	download)
 
 		if [[ $UDP == false && $TCP == false ]]; then
@@ -202,6 +242,7 @@ case $cmd in
 		service nordvpn start
 		;;
 	status)
+		systemctl status --no-pager --full nordvpn
 		showstatus
 		;;
 	*)
