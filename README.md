@@ -1,5 +1,5 @@
 #Nordvpn
-Script script around Systemd and Openvpn to make downloading and selecting a vpn from nordvpn easier
+Shell script around Systemd and Openvpn to make downloading and selecting a vpn from nordvpn easier
 
 ##Dependencies
 - dnsutils (dig)
