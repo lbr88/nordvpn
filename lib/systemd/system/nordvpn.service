@@ -8,6 +8,7 @@ PrivateTmp=true
 KillMode=mixed
 Type=forking
 #ExecStartPre=/usr/local/sbin/nordvpn -qf update
+RuntimeDirectory=nordvpn
 ExecStart=/usr/sbin/openvpn --daemon ovpn-nordvpn --status /run/nordvpn/nordvpn.status 10 --cd /etc/nordvpn --script-security 2 --config /etc/nordvpn/nordvpn.conf --writepid /run/nordvpn/nordvpn.pid
 PIDFile=/run/nordvpn/nordvpn.pid
 ExecReload=/bin/kill -HUP $MAINPID

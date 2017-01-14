@@ -1,4 +1,7 @@
 #!/bin/bash
+
+#  curl -o- https://nordvpn.com/api/server |jq '.[] | select( .flag == "US"  ) | { name: .name, ip_address: .ip_address, load: .load, features: .features, categories: .categories }'
+# https://jqplay.org/
 UPDATETYPE=fastest
 UDP=false
 TCP=false
@@ -9,7 +12,9 @@ if [[ -r "/etc/default/nordvpn" ]];then
 fi
 
 tmpdir=$(mktemp -d "/tmp/nordvpn.XXXXXXXXXXXXX")
-vpnhttpzip=https://nordvpn.com/api/files/zip 
+api=https://nordvpn.com/api
+apiservers=$api/server
+vpnhttpzip=$api/files/zip 
 configdir=/etc/nordvpn
 libdir=/var/lib/nordvpn
 rundir=/run/nordvpn
@@ -148,6 +153,9 @@ function selectconf_fastest {
 }
 function selectconf {
 	case $UPDATETYPE in
+		load)
+			selectconf_load
+			;;
 		fastest)
 			selectconf_fastest
 			;;
@@ -189,6 +197,9 @@ while getopts ":c:qrftu" opt; do
 		r)
 			UPDATETYPE=random
 			;;
+		l)
+			UPDATETYPE=load
+			;;
 		f)
 			UPDATETYPE=fastest
 			;;
@@ -214,7 +225,10 @@ shift "$((OPTIND - 1))"
 cmd=$1
 case $cmd in
 	login)
-		login
+		autologin
+		;;
+	autologin)
+		autologin
 		;;
 	download)
 
