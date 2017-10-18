@@ -1,5 +1,4 @@
 #!/bin/bash
-
 #  curl -o- https://nordvpn.com/api/server |jq '.[] | select( .flag == "US"  ) | { name: .name, ip_address: .ip_address, load: .load, features: .features, categories: .categories }'
 # https://jqplay.org/
 UPDATETYPE=fastest
@@ -14,7 +13,7 @@ fi
 tmpdir=$(mktemp -d "/tmp/nordvpn.XXXXXXXXXXXXX")
 api=https://nordvpn.com/api
 apiservers=$api/server
-vpnhttpzip=$api/files/zip 
+vpnhttpzip=$api/files/zip
 configdir=/etc/nordvpn
 libdir=/var/lib/nordvpn
 rundir=/run/nordvpn
@@ -105,11 +104,14 @@ function download {
 	#get new
 	pushd $tmpdir
 	msg Downloading.
-	curl -s -o $vpnzipfile -z $vpnzipfile $vpnhttpzip || msgdie Download failed.
+	(wget --continue --quiet -O$vpnzipfile $vpnhttpzip || curl -s -z $vpnzipfile -o $vpnzipfile $vpnhttpzip) || msgdie Download failed.
 	cp $vpnzipfile ./vpn.zip
+	unzip -t vpn.zip || msgdie vpn zip test failed
 	if [[ -f vpn.zip ]];then
 		msg Unpacking.
-		unzip -qq vpn.zip
+		unzip -qq vpn.zip || msgdie unzip failed
+		chown root:root *.ovpn
+                chmod 600 *.ovpn
 		rm vpn.zip
 		#cleanup old stuff
 		pushd $vpndir
@@ -127,7 +129,7 @@ function download {
 				mv $c*.ovpn $vpndir
 			done
 		fi
-		msg Changing configs to use autologin.
+		msg Adding login to configs
 		updatelogin
 	else
 		exit 1
